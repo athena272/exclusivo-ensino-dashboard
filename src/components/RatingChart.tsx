@@ -8,6 +8,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { Card, CardHeader, CardTitle, CardHint } from "../styles";
+import { CustomTooltip } from "./CustomTooltip";
 
 type Props = {
   dist: { score: number; count: number }[];
@@ -15,6 +16,8 @@ type Props = {
 };
 
 export function RatingChart({ dist, avg }: Props) {
+  const total = dist.reduce((a, b) => a + b.count, 0);
+
   return (
     <Card>
       <CardHeader>
@@ -49,15 +52,7 @@ export function RatingChart({ dist, avg }: Props) {
               axisLine={false}
               allowDecimals={false}
             />
-            <Tooltip
-              contentStyle={{
-                background: "rgba(15,18,28,0.95)",
-                border: "1px solid rgba(255,255,255,0.10)",
-                borderRadius: 12,
-                color: "rgba(255,255,255,0.92)",
-              }}
-              labelStyle={{ color: "rgba(255,255,255,0.75)" }}
-            />
+            <Tooltip content={<CustomTooltip total={total} />} />
             <Bar dataKey="count" radius={[10, 10, 10, 10]} />
           </BarChart>
         </ResponsiveContainer>

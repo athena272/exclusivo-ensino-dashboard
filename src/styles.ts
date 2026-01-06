@@ -217,6 +217,12 @@ export const Select = styled.select`
   border-radius: 12px;
   padding: 10px 12px;
   outline: none;
+  appearance: none;
+
+  option {
+    background: #0b0f17; /* fundo do dropdown */
+    color: rgba(255, 255, 255, 0.92);
+  }
 
   &:focus {
     border-color: rgba(120, 79, 255, 0.7);
