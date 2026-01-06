@@ -1,3 +1,4 @@
+// src/google/gis.ts
 declare global {
   interface Window {
     google?: any;
@@ -20,13 +21,19 @@ async function waitForGoogleIdentity(maxMs = 10_000) {
   );
 }
 
+export type TokenResult = {
+  accessToken: string;
+  expiresIn?: number; // segundos
+};
+
 export async function requestAccessToken(opts: {
   clientId: string;
   scopes: string[];
-}): Promise<string> {
+  prompt?: "" | "consent" | "select_account";
+}): Promise<TokenResult> {
   await waitForGoogleIdentity();
 
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<TokenResult>((resolve, reject) => {
     const tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: opts.clientId,
       scope: opts.scopes.join(" "),
@@ -35,11 +42,14 @@ export async function requestAccessToken(opts: {
           reject(new Error(resp?.error ?? "Falha ao obter access token"));
           return;
         }
-        resolve(resp.access_token as string);
+        resolve({
+          accessToken: resp.access_token as string,
+          expiresIn:
+            typeof resp.expires_in === "number" ? resp.expires_in : undefined,
+        });
       },
     });
 
-    // Abre popup de login/consentimento
-    tokenClient.requestAccessToken({ prompt: "" });
+    tokenClient.requestAccessToken({ prompt: opts.prompt ?? "" });
   });
 }

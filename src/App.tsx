@@ -72,8 +72,40 @@ function downloadCsv(filename: string, rows: SurveyResponse[]) {
   URL.revokeObjectURL(url);
 }
 
+const TOKEN_KEY = "exclusivo_google_token";
+
+function saveToken(accessToken: string, expiresIn?: number) {
+  const expiresAt = expiresIn
+    ? Date.now() + expiresIn * 1000
+    : Date.now() + 50 * 60 * 1000; // fallback 50min
+  sessionStorage.setItem(TOKEN_KEY, JSON.stringify({ accessToken, expiresAt }));
+}
+
+function loadToken(): string | null {
+  const raw = sessionStorage.getItem(TOKEN_KEY);
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw) as { accessToken: string; expiresAt: number };
+    if (!data?.accessToken || !data?.expiresAt) return null;
+    if (Date.now() >= data.expiresAt) {
+      sessionStorage.removeItem(TOKEN_KEY);
+      return null;
+    }
+    return data.accessToken;
+  } catch {
+    sessionStorage.removeItem(TOKEN_KEY);
+    return null;
+  }
+}
+
+function clearToken() {
+  sessionStorage.removeItem(TOKEN_KEY);
+}
+
 export default function App() {
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(() =>
+    loadToken()
+  );
   const [formId, setFormId] = useState<string>(
     import.meta.env.VITE_FORM_ID ?? ""
   );
@@ -150,8 +182,14 @@ export default function App() {
     try {
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string;
       if (!clientId) throw new Error("Faltou VITE_GOOGLE_CLIENT_ID no .env");
-      const token = await requestAccessToken({ clientId, scopes: SCOPES });
-      setAccessToken(token);
+
+      const result = await requestAccessToken({
+        clientId,
+        scopes: SCOPES,
+        prompt: "",
+      });
+      setAccessToken(result.accessToken);
+      saveToken(result.accessToken, result.expiresIn);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -161,10 +199,6 @@ export default function App() {
     setError(null);
     if (!accessToken) {
       setError("Conecte com Google primeiro.");
-      return;
-    }
-    if (!formId.trim()) {
-      setError("Informe o formId (o do link /d/<id>/edit).");
       return;
     }
 
@@ -177,7 +211,15 @@ export default function App() {
       setRows(data);
       setLastSync(new Date());
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      const msg = e?.message ?? String(e);
+
+      // token expirou/revogado → força reconectar
+      if (msg.includes("401") || msg.includes("403")) {
+        clearToken();
+        setAccessToken(null);
+      }
+
+      setError(msg);
     } finally {
       setLoading(false);
     }
