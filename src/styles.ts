@@ -17,7 +17,7 @@ export const GlobalStyle = createGlobalStyle`
   }
 
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
+  html, body { min-height: 100vh; }
   body {
     margin: 0;
     background: radial-gradient(1200px 800px at 15% 15%, rgba(120,79,255,0.25), transparent 60%),
