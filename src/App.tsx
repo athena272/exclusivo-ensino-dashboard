@@ -2,33 +2,75 @@ import { useMemo, useState } from "react";
 import { requestAccessToken } from "./google/gis";
 import { loadSurveyResponses, type SurveyResponse } from "./google/formsApi";
 import {
+  GlobalStyle,
   Shell,
   TopBar,
+  TopBarInner,
+  TitleWrap,
   Title,
+  Subtitle,
   Actions,
-  Btn,
-  Card,
-  Label,
-  Input,
-  ErrorBox,
+  Button,
+  Pill,
   Grid,
   Kpi,
   KpiLabel,
   KpiValue,
-  Subtitle,
-  Dist,
-  DistRow,
-  DistScore,
-  DistCount,
-  DistBar,
-  Hint,
-  Table,
+  KpiSub,
+  ErrorBox,
 } from "./styles";
+import { FiltersBar, type Filters } from "./components/FiltersBar";
+import { RatingChart } from "./components/RatingChart";
+import { ResponsesTable } from "./components/ResponsesTable";
+import { CheckCircle2, AlertTriangle, PlugZap } from "lucide-react";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/forms.responses.readonly",
   "https://www.googleapis.com/auth/forms.body.readonly",
 ];
+
+function toBucket(
+  r?: number
+): "promoters" | "passives" | "detractors" | "unknown" {
+  if (typeof r !== "number") return "unknown";
+  if (r >= 9) return "promoters";
+  if (r >= 7) return "passives";
+  return "detractors";
+}
+
+function downloadCsv(filename: string, rows: SurveyResponse[]) {
+  const headers = ["submittedAt", "name", "rating", "comment", "responseId"];
+  const esc = (v: any) => {
+    const s = (v ?? "").toString().replace(/\r?\n/g, " ");
+    return `"${s.replace(/"/g, '""')}"`;
+  };
+
+  const lines = [
+    headers.join(","),
+    ...rows.map((r) =>
+      [
+        r.submittedAt,
+        r.name ?? "",
+        r.rating ?? "",
+        r.comment ?? "",
+        r.responseId,
+      ]
+        .map(esc)
+        .join(",")
+    ),
+  ];
+
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 export default function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -38,12 +80,35 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<SurveyResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+
+  const [filters, setFilters] = useState<Filters>({ q: "", bucket: "all" });
+
+  const filteredRows = useMemo(() => {
+    const q = filters.q.trim().toLowerCase();
+
+    return rows.filter((r) => {
+      const bucket = toBucket(r.rating);
+
+      if (filters.bucket !== "all") {
+        if (bucket !== filters.bucket) return false;
+      }
+
+      if (q) {
+        const hay = `${r.name ?? ""} ${r.comment ?? ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+
+      return true;
+    });
+  }, [rows, filters]);
 
   const metrics = useMemo(() => {
-    const ratings = rows
+    const ratings = filteredRows
       .map((r) => r.rating)
       .filter((n): n is number => typeof n === "number");
-    const total = rows.length;
+
+    const total = filteredRows.length;
     const totalRated = ratings.length;
 
     const avg =
@@ -56,15 +121,35 @@ export default function App() {
       count: ratings.filter((r) => r === i).length,
     }));
 
-    return { total, totalRated, avg, dist };
-  }, [rows]);
+    const promoters = ratings.filter((r) => r >= 9).length;
+    const detractors = ratings.filter((r) => r <= 6).length;
+    const passives = ratings.filter((r) => r >= 7 && r <= 8).length;
+
+    const nps =
+      totalRated > 0
+        ? Math.round(
+            ((promoters / totalRated) * 100 - (detractors / totalRated) * 100) *
+              10
+          ) / 10
+        : undefined;
+
+    return {
+      total,
+      totalRated,
+      avg,
+      dist,
+      promoters,
+      passives,
+      detractors,
+      nps,
+    };
+  }, [filteredRows]);
 
   async function onConnect() {
     setError(null);
     try {
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string;
       if (!clientId) throw new Error("Faltou VITE_GOOGLE_CLIENT_ID no .env");
-
       const token = await requestAccessToken({ clientId, scopes: SCOPES });
       setAccessToken(token);
     } catch (e: any) {
@@ -90,6 +175,7 @@ export default function App() {
         accessToken,
       });
       setRows(data);
+      setLastSync(new Date());
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
@@ -97,86 +183,93 @@ export default function App() {
     }
   }
 
-  return (
-    <Shell>
-      <TopBar>
-        <Title>Dashboard — Exclusivo Ensino</Title>
+  function onExportCsv() {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    downloadCsv(`exclusivo-ensino-respostas-${stamp}.csv`, filteredRows);
+  }
 
-        <Actions>
-          <Btn onClick={onConnect}>
-            {accessToken ? "Reconectar" : "Conectar Google"}
-          </Btn>
-          <Btn onClick={onLoad} disabled={!accessToken || loading}>
-            {loading ? "Carregando..." : "Buscar respostas"}
-          </Btn>
-        </Actions>
+  const connected = !!accessToken;
+
+  return (
+    <>
+      <GlobalStyle />
+      <TopBar>
+        <Shell>
+          <TopBarInner>
+            <TitleWrap>
+              <Title>Dashboard — Exclusivo Ensino</Title>
+              <Subtitle>
+                {lastSync
+                  ? `Última atualização: ${lastSync.toLocaleString()}`
+                  : "Conecte e carregue as respostas"}
+              </Subtitle>
+            </TitleWrap>
+
+            <Actions>
+              <Pill tone={connected ? "ok" : "warn"}>
+                {connected ? (
+                  <CheckCircle2 size={16} />
+                ) : (
+                  <AlertTriangle size={16} />
+                )}
+                {connected ? "Conectado" : "Não conectado"}
+              </Pill>
+
+              <Button variant="secondary" onClick={onConnect}>
+                <PlugZap size={16} />
+                {connected ? "Reconectar" : "Conectar Google"}
+              </Button>
+            </Actions>
+          </TopBarInner>
+        </Shell>
       </TopBar>
 
-      <Card>
-        <Label>Form ID (do link /edit)</Label>
-        <Input
-          value={formId}
-          onChange={(e) => setFormId(e.target.value)}
-          placeholder="ex: 1kbtgwxxBvW1O_Uf9Oh9c-XsR4_NdqrKDBnBAO3GE1-o"
+      <Shell>
+        <FiltersBar
+          formId={formId}
+          setFormId={setFormId}
+          filters={filters}
+          setFilters={setFilters}
+          connected={connected}
+          loading={loading}
+          onLoad={onLoad}
+          onExportCsv={onExportCsv}
         />
 
         {error && <ErrorBox>{error}</ErrorBox>}
-      </Card>
 
-      <Grid>
-        <Kpi>
-          <KpiLabel>Total de respostas</KpiLabel>
-          <KpiValue>{metrics.total}</KpiValue>
-        </Kpi>
+        <Grid>
+          <Kpi>
+            <KpiLabel>Total (após filtros)</KpiLabel>
+            <KpiValue>{metrics.total}</KpiValue>
+            <KpiSub>Linhas visíveis na tabela</KpiSub>
+          </Kpi>
 
-        <Kpi>
-          <KpiLabel>Respostas com nota</KpiLabel>
-          <KpiValue>{metrics.totalRated}</KpiValue>
-        </Kpi>
+          <Kpi>
+            <KpiLabel>Respostas com nota</KpiLabel>
+            <KpiValue>{metrics.totalRated}</KpiValue>
+            <KpiSub>Ignora vazios/sem nota</KpiSub>
+          </Kpi>
 
-        <Kpi>
-          <KpiLabel>Média (0–10)</KpiLabel>
-          <KpiValue>{metrics.avg?.toFixed(2) ?? "—"}</KpiValue>
-        </Kpi>
-      </Grid>
+          <Kpi>
+            <KpiLabel>Média (0–10)</KpiLabel>
+            <KpiValue>{metrics.avg?.toFixed(2) ?? "—"}</KpiValue>
+            <KpiSub>Base: {metrics.totalRated}</KpiSub>
+          </Kpi>
 
-      <Card>
-        <Subtitle>Distribuição das notas</Subtitle>
-        <Dist>
-          {metrics.dist.map((d) => (
-            <DistRow key={d.score}>
-              <DistScore>{d.score}</DistScore>
-              <DistBar style={{ width: `${Math.min(100, d.count * 10)}%` }} />
-              <DistCount>{d.count}</DistCount>
-            </DistRow>
-          ))}
-        </Dist>
-        <Hint>* A largura da barra é só visual (count × 10%).</Hint>
-      </Card>
+          <Kpi>
+            <KpiLabel>NPS</KpiLabel>
+            <KpiValue>{metrics.nps ?? "—"}</KpiValue>
+            <KpiSub>
+              9–10: {metrics.promoters} • 7–8: {metrics.passives} • 0–6:{" "}
+              {metrics.detractors}
+            </KpiSub>
+          </Kpi>
+        </Grid>
 
-      <Card>
-        <Subtitle>Respostas</Subtitle>
-        <Table>
-          <thead>
-            <tr>
-              <th>Quando</th>
-              <th>Nome</th>
-              <th>Nota</th>
-              <th>Comentário</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.responseId}>
-                <td>{new Date(r.submittedAt).toLocaleString()}</td>
-                <td>{r.name ?? "—"}</td>
-                <td>{typeof r.rating === "number" ? r.rating : "—"}</td>
-                <td>{r.comment ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </Card>
-    </Shell>
+        <RatingChart dist={metrics.dist} avg={metrics.avg} />
+        <ResponsesTable rows={filteredRows} />
+      </Shell>
+    </>
   );
 }
